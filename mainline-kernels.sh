@@ -135,7 +135,12 @@ remove_installed_mainline_kernels ()
 }
 
 if [ -n "$update" ]; then
-    wget https://raw.githubusercontent.com/fourdollars/scripts/master/ubuntu/mainline-kernels.sh -O $script
+    wget https://raw.githubusercontent.com/fourdollars/scripts/master/mainline-kernels.sh -O $script
+    exit
+fi
+
+if ! which dialog > /dev/null 2>&1; then
+    echo "Please install dialog by \`sudo apt install dialog\` first."
     exit
 fi
 
