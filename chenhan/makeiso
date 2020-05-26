@@ -1,0 +1,27 @@
+#!/bin/sh
+#
+# Usage: makeiso input.iso folder/
+
+set -uxe
+
+iso=$(readlink -f "$1")
+
+folder="$2"
+pwd=$(pwd)
+
+for prog in fuseiso fusermount rsync ; do
+    if ! which "$prog" >/dev/null; then
+        echo "Error: Missing $prog" >&2
+        exit 1
+    fi
+done
+
+mountdir=$(mktemp -d)
+fuseiso "$iso" "$mountdir"
+
+set +e
+rsync -avP --delete "$mountdir"/ "$folder"/
+set -e
+
+fusermount -u "$mountdir"
+rmdir "$mountdir"
