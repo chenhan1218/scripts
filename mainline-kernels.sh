@@ -16,7 +16,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-url='http://kernel.ubuntu.com/~kernel-ppa/mainline'
+url='https://kernel.ubuntu.com/~kernel-ppa/mainline'
 script="$0"
 
 set -e
@@ -26,7 +26,10 @@ while :; do
     case "$1" in
         ('-h'|'--help')
             cat <<ENDLINE
-Usage $0:
+Usage:
+    $0 [options] [versions] ...
+
+Options:
     -h|--help          The manual of this script
     -d|--download-only Download only and not install
     -f|--from NUM      Lower bound of kernel version
@@ -68,37 +71,42 @@ download_and_install_kernels ()
         arch='i386'
     fi
     for ver in $(eval echo $downloads); do
-        pkgs=`wget -q $url/v${ver/~rc/-rc}/ -O - | grep -o "linux[^\"]*\(all\|$arch\).deb" | grep -v -e lowlatency -e cloud | sort -u`
-        mkdir -p "$PWD/mainline/v$ver"
+        ver="${ver/~rc/-rc}"
+        debver="${ver/-rc/~rc}"
+        pkgs=`wget -q $url/v$ver/ -O - | grep -o "linux[^\"]*\(all\|$arch\).deb" | grep -v -e lowlatency -e cloud | sort -u`
         for pkg in $pkgs; do
-            [ -f "$PWD/mainline/v$ver/$pkg" ] || wget -nv --show-progress "$url/v${ver/~rc/-rc}/$pkg" -O "$PWD/mainline/v$ver/$pkg"
+            [ -d "$PWD/kernels/v$debver" ] || mkdir -p "$PWD/kernels/v$debver"
+            [ -f "$PWD/kernels/v$debver/$pkg" ] || wget -nv --show-progress "$url/v$ver/$pkg" -O "$PWD/kernels/v$debver/$pkg"
         done
-        if [ -z "$download_only" ]; then
-            sudo dpkg -i $PWD/mainline/v$ver/*.deb
+        if [ -z "$pkgs" ]; then
+            echo "There is no v${debver} mainline kernel to download."
+        elif [ -z "$download_only" ]; then
+            sudo dpkg -i $PWD/kernels/v$debver/*.deb
         fi
     done
 }
 
 check_available_kernels ()
 {
-    vers=`wget -q $url -O - | grep -o 'href="v[^"]*"' | grep -o '[0-9][^/]*'`
+    vers=`wget -q $url -O - | grep -o 'href="v[^"]*"' | grep -o '[0-9][^/]*' | sort -V`
 
     for ver in $vers; do
-        debver=`echo $ver | sed 's/-rc/~rc/'`
+        ver="${ver/~rc/-rc}"
+        debver="${ver/-rc/~rc}"
         if [ -n "$min" -a -n "$max" ]; then
             if dpkg --compare-versions $debver ge $min && dpkg --compare-versions $debver le $max; then
-                downloads="$downloads $ver"
+                downloads="$downloads $debver"
             fi
         elif [ -n "$min" ]; then
             if dpkg --compare-versions $debver ge $min; then
-                downloads="$downloads $ver"
+                downloads="$downloads $debver"
             fi
         elif [ -n "$max" ]; then
             if dpkg --compare-versions $debver le $max; then
-                downloads="$downloads $ver"
+                downloads="$downloads $debver"
             fi
         else
-            downloads="$downloads $ver"
+            downloads="$downloads $debver"
         fi
     done
 }
@@ -111,13 +119,18 @@ select_kernels_to_install ()
     else
         items=$(echo $downloads | xargs -n1 | awk '{ print $1, "kernel", "off" }' | xargs echo)
     fi
-    downloads=$(dialog --clear --checklist 'Select kernels to install...' 0 0 $num $items 2>&1 >/dev/tty)
+    downloads=$(whiptail --clear --checklist "Select kernels to $action..." 0 0 $num $items 2>&1 >/dev/tty)
 }
 
 remove_installed_mainline_kernels ()
 {
     installed=""
     for i in $(dpkg-query -W | grep linux-image-[2-9] | cut -d '-' -f 3-4); do
+        if [ $(echo $i | cut -d '-' -f 2 | wc -c) -gt 6 ]; then
+            installed="$installed $i"
+        fi
+    done
+    for i in $(dpkg-query -W | grep linux-image-unsigned-[2-9] | cut -d '-' -f 4-5); do
         if [ $(echo $i | cut -d '-' -f 2 | wc -c) -gt 6 ]; then
             installed="$installed $i"
         fi
@@ -131,7 +144,7 @@ remove_installed_mainline_kernels ()
     installed=$(echo $installed | xargs -n1 | awk '{ print $1, "kernel", "off" }' | xargs echo)
 
     packages=""
-    for i in $(dialog --clear --checklist 'Select kernels to remove...' 0 0 $num $installed 2>&1 >/dev/tty); do
+    for i in $(whiptail --clear --checklist 'Select kernels to remove...' 0 0 $num $installed 2>&1 >/dev/tty); do
         packages="$packages $(dpkg-query -W | eval grep linux.*$i | awk '{print $1}')"
     done
 
@@ -145,18 +158,20 @@ if [ -n "$update" ]; then
     exit
 fi
 
-if ! which dialog > /dev/null 2>&1; then
-    echo "Please install dialog by \`sudo apt install dialog\` first."
-    exit
-fi
-
 if [ -n "$remove" ]; then
     remove_installed_mainline_kernels
     exit
 fi
 
 if [ -n "$*" ]; then
+    noprompt=1
     downloads="$*"
+fi
+
+if [ -z "$download_only" ]; then
+    action="install"
+else
+    action="download"
 fi
 
 if [ -z "$downloads" ]; then
@@ -169,13 +184,7 @@ if [ -z "$downloads" ]; then
     fi
 fi
 
-if [ -z "$download_only" ]; then
-    action="install"
-else
-    action="download"
-fi
-
-if ! dialog --title "Would you like to $action these kernels..." --yesno "$(echo $downloads | xargs -n1)" 0 0; then
+if [ -z "$noprompt" ] && [ -n "$downloads" ] && ! whiptail --title "Would you like to $action these kernels?" --yesno "$(echo $downloads | xargs -n1)" 0 0; then
     exit
 fi
 
